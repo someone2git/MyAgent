@@ -41,7 +41,7 @@ public class AgentController {
             ChatMemory chatMemory = webSearchReactAgent.creatPersistentChatMemory(conversationId, 30);
             webSearchReactAgent.setChatMemory(chatMemory);
             //reactagent执行
-            return webSearchReactAgent.stream(query, chatMemory);
+            return webSearchReactAgent.stream(query, conversationId);
         } catch (Exception e) {
             log.error("联网查询对话请求处理异常：", e);
             return Flux.error(e);

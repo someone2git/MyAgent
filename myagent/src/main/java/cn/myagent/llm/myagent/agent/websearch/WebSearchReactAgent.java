@@ -66,8 +66,8 @@ public class WebSearchReactAgent extends BaseAgent {
         this.chatClient = builder.defaultOptions(toolCallingChatOptions).defaultToolCallbacks(toolCallbacks).build();
     }
 
-    public Flux<String> stream(String query, ChatMemory chatMemory) {
-        return null;
+    public Flux<String> stream(String query, String conversationId) {
+        return streamInternal(query, conversationId);
     }
 
     public static Builder builder() {
