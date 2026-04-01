@@ -1,0 +1,4 @@
+package cn.myagent.llm.myagent.entity.record;
+
+public record SearchResult(String url, String title, String content) {
+}

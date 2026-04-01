@@ -1,28 +1,48 @@
 package cn.myagent.llm.myagent.controller;
 
 import cn.myagent.llm.myagent.agent.websearch.WebSearchReactAgent;
+import cn.myagent.llm.myagent.manager.AgentTaskManager;
 import cn.myagent.llm.myagent.service.AiSessionService;
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.net.http.HttpRequest;
+import java.time.Duration;
+import java.util.List;
+
 @RestController
 @RequestMapping("/agent")
 @Slf4j
-public class AgentController {
+public class AgentController implements InitializingBean {
 
     @Resource
     private ChatModel chatModel;
 
     @Resource
     private AiSessionService aiSessionService;
+
+    @Resource
+    private AgentTaskManager agentTaskManager;
+
+    @Value("${tavily.api-key}")
+    private String tavilyApiKey;
+
+    @Value("${tavily.mcp-url}")
+    private String tavilyMcpUrl;
 
     private ToolCallback[] webSearchToolCallbacks;
 
@@ -56,8 +76,41 @@ public class AgentController {
                 .chatModel(chatModel)
                 .tools(webSearchToolCallbacks)
                 .sessionService(aiSessionService)
+                .agentTaskManager(agentTaskManager)
                 .maxRounds(5)
                 .build();
     }
 
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        log.info("开始初始化工具toolcallback");
+
+        // 初始化网页搜索工具回调
+        initWebSearchToolCallbacks();
+
+        log.info("工具toolcallback初始化完成");
+    }
+
+    private void initWebSearchToolCallbacks() throws Exception {
+        log.info("初始化网页搜索工具回调...");
+
+        // tavily 搜索引擎
+        String authorizationHeader = "Bearer " + tavilyApiKey;
+
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                .header("Authorization", authorizationHeader);
+
+        HttpClientStreamableHttpTransport tavTransport = HttpClientStreamableHttpTransport.builder(tavilyMcpUrl)
+                .requestBuilder(requestBuilder).build();
+        McpSyncClient tavilyMcp = McpClient.sync(tavTransport)
+                .requestTimeout(Duration.ofSeconds(120))
+                .build();
+        tavilyMcp.initialize();
+
+        List<McpSyncClient> mcpClients = List.of(tavilyMcp);
+        SyncMcpToolCallbackProvider provider = SyncMcpToolCallbackProvider.builder().mcpClients(mcpClients).build();
+
+        webSearchToolCallbacks = provider.getToolCallbacks();
+        log.info("网页搜索工具回调初始化完成，工具数量: {}", webSearchToolCallbacks.length);
+    }
 }
