@@ -100,8 +100,7 @@ public class AgentController implements InitializingBean {
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .header("Authorization", authorizationHeader);
 
-        HttpClientStreamableHttpTransport tavTransport = HttpClientStreamableHttpTransport.builder(tavilyMcpUrl)
-                .requestBuilder(requestBuilder).build();
+        HttpClientStreamableHttpTransport tavTransport = HttpClientStreamableHttpTransport.builder(tavilyMcpUrl).requestBuilder(requestBuilder).build();
         McpSyncClient tavilyMcp = McpClient.sync(tavTransport)
                 .requestTimeout(Duration.ofSeconds(120))
                 .build();

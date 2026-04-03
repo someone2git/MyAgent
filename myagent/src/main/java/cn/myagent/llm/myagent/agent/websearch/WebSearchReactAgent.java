@@ -109,6 +109,7 @@ public class WebSearchReactAgent extends BaseAgent {
         if ( taskInfo == null && conversationId != null && taskManager != null) {
             return Flux.error(new IllegalStateException("会话正在进行，稍后重试"));
         }
+        // 构造提示词
         // 加载系统提示词
         List<Message> messages = Collections.synchronizedList(new ArrayList<>());
         messages.add(new SystemMessage(ReactAgentPrompts.getWebSearchPrompt()));
@@ -228,8 +229,6 @@ public class WebSearchReactAgent extends BaseAgent {
         if (conversationId != null && taskManager != null) {
             taskManager.setDisposable(conversationId, disposable);
         }
-
-
     }
 
     private void processChunk(ChatResponse chunk, Sinks.Many<String> sink, RoundState state) {
@@ -280,13 +279,13 @@ public class WebSearchReactAgent extends BaseAgent {
             StringBuilder thinkingBuffer) {
         if(state.getMode() != RoundMode.TOOL_CALL) {
             String referenceJson = "";
-            String finalText = state.textBuffer.toString();
             if (!agentState.searchResults.isEmpty()){
                 String reference = JSON.toJSONString(agentState.searchResults);
                 referenceJson = createReferenceResponse(reference);
                 sink.tryEmitNext(referenceJson);
             }
 
+            String finalText = state.textBuffer.toString();
             if (enableRecommendations) {
                  String recommentations = generateRecommendations(conversationId, currentQuestion, finalText);
                  if (recommentations != null) {

@@ -78,11 +78,11 @@ public abstract class BaseAgent {
         if (CollectionUtils.isNotEmpty(aiSessions)) {
             for (AiSession aiSession : aiSessions) {
                 if(StringUtils.isNotEmpty(aiSession.getQuestion())) {
-                    chatMemory.add(aiSession.getQuestion(), new UserMessage(aiSession.getQuestion()));
+                    chatMemory.add(sessionId, new UserMessage(aiSession.getQuestion()));
                 }
                 // 这里并不会覆盖上面的message，先查询已经add的message，底层process方法会把旧message和新message合并为一个list
                 if(StringUtils.isNotEmpty(aiSession.getAnswer())) {
-                    chatMemory.add(aiSession.getQuestion(), new AssistantMessage(aiSession.getAnswer()));
+                    chatMemory.add(sessionId, new AssistantMessage(aiSession.getAnswer()));
                 }
             }
         }
