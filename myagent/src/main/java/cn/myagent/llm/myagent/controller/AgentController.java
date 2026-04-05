@@ -22,7 +22,9 @@ import reactor.core.publisher.Flux;
 
 import java.net.http.HttpRequest;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/agent")
@@ -66,6 +68,20 @@ public class AgentController implements InitializingBean {
             log.error("联网查询对话请求处理异常：", e);
             return Flux.error(e);
         }
+    }
+
+    @GetMapping("/stop")
+    public Map<String, Object> stopAgent(@RequestParam String conversationId) {
+        boolean success = agentTaskManager.stopTask(conversationId);
+        Map<String, Object> result = new HashMap<>();
+        if (success) {
+            result.put("success", true);
+            result.put("message", "已停止执行");
+        } else {
+            result.put("success", false);
+            result.put("message", "没有找到正在执行的任务或已停止");
+        }
+        return result;
     }
 
     private WebSearchReactAgent initWebSearchAgent() {
