@@ -93,7 +93,7 @@ public class FileContentService {
      */
     private String loadDirectly(String fileId, FileInfo fileInfo) {
         // 获取文件内容
-        String content = fileManageService.getFileContent(fileId);
+        String content = fileInfo.getExtractedText();
         String contentText = (content != null && !content.trim().isEmpty()) ? content : "该文件没有可识别的内容";
 
         return buildResponse(fileId, fileInfo, contentText, null);

@@ -58,7 +58,7 @@ public class EmbeddingService {
         try {
             Query query = Query.builder().text(question).build();
 
-            // 1. 问题压缩重写
+            // 1. 问题压缩重写（未获取历史对话）
             ChatClient chatClient = ChatClient.builder(chatModel).build();
             CompressionQueryTransformer queryTransformer = CompressionQueryTransformer.builder()
                     .chatClientBuilder(chatClient.mutate())
