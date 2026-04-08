@@ -1,4 +1,4 @@
-package cn.myagent.llm.myagent.agent.websearch;
+package cn.myagent.llm.myagent.agent.file;
 
 import cn.myagent.llm.myagent.agent.BaseAgent;
 import cn.myagent.llm.myagent.entity.AiSession;
@@ -11,17 +11,17 @@ import cn.myagent.llm.myagent.entity.vo.UpdateAnswerRequest;
 import cn.myagent.llm.myagent.manager.AgentTaskManager;
 import cn.myagent.llm.myagent.prompts.ReactAgentPrompts;
 import cn.myagent.llm.myagent.service.AiSessionService;
-import com.alibaba.cloud.ai.graph.agent.Agent;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.Resource;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.ai.chat.model.ChatModel;
@@ -39,8 +39,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+@EqualsAndHashCode(callSuper = true)
 @Slf4j
-public class WebSearchReactAgent extends BaseAgent {
+@Data
+public class FileReactAgent extends BaseAgent {
 
     private ChatClient chatClient;
 
@@ -50,23 +52,19 @@ public class WebSearchReactAgent extends BaseAgent {
 
     private int maxRounds;
 
-    private final List<Advisor> advisors;
+    private String currentFileId;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    private AtomicBoolean hasSentFinalResult;
-
-    public WebSearchReactAgent(String name, ChatModel chatModel, List<ToolCallback> tools, String systemPrompt, int maxRounds,
-                               ChatMemory chatMemory, List<Advisor> advisors,
-                               AiSessionService sessionService, AgentTaskManager agentTaskManager) {
-        super(name, chatModel, "websearch");
+    public FileReactAgent(String name, ChatModel chatModel, List<ToolCallback> tools,
+                          String systemPrompt, int maxRounds, ChatMemory chatMemory,
+                          AiSessionService sessionService, AgentTaskManager taskManager) {
+        super(name, chatModel, "file");
         this.toolCallbacks = tools;
         this.systemPrompt = systemPrompt;
         this.maxRounds = maxRounds;
-        this.advisors = advisors;
         this.chatMemory = chatMemory;
         this.sessionService = sessionService;
-        this.taskManager = agentTaskManager;
+        this.taskManager = taskManager;
+
         // 初始化工具记录集合
         this.usedTools = new HashSet<>();
 
@@ -82,16 +80,12 @@ public class WebSearchReactAgent extends BaseAgent {
                 .toolCallbacks(toolCallbacks)
                 .internalToolExecutionEnabled(false)
                 .build();
-
         ChatClient.Builder builder = ChatClient.builder(chatModel);
-        if (CollectionUtils.isNotEmpty(advisors)) {
-            builder.defaultAdvisors(advisors);
-        }
         this.chatClient = builder.defaultOptions(toolCallingChatOptions).defaultToolCallbacks(toolCallbacks).build();
     }
 
-    public Flux<String> stream(String query, String conversationId) {
-        return streamInternal(query, conversationId);
+    public Flux<String> stream(String question, String conversationId) {
+        return streamInternal(question, conversationId);
     }
 
     private Flux<String> streamInternal(String question, String conversationId) {
@@ -121,6 +115,7 @@ public class WebSearchReactAgent extends BaseAgent {
         loadChatHistory(conversationId, messages, true, true);
         // 添加用户问题
         messages.add(new UserMessage("<question>" + question + "</question>"));
+        messages.add(new UserMessage("<fileid>" + currentFileId + "</fileid>"));
         currentQuestion = question;
         // 用户问题保存到数据库
         if (sessionService != null) {
@@ -288,12 +283,12 @@ public class WebSearchReactAgent extends BaseAgent {
 
             String finalText = state.textBuffer.toString();
             if (enableRecommendations) {
-                 String recommentations = generateRecommendations(conversationId, currentQuestion, finalText);
-                 if (recommentations != null) {
-                     currentRecommendations = recommentations;
-                     String recommendJson = createRecommendResponse(recommentations);
-                     sink.tryEmitNext(recommendJson);
-                 }
+                String recommentations = generateRecommendations(conversationId, currentQuestion, finalText);
+                if (recommentations != null) {
+                    currentRecommendations = recommentations;
+                    String recommendJson = createRecommendResponse(recommentations);
+                    sink.tryEmitNext(recommendJson);
+                }
             }
             sink.tryEmitComplete();
             hasSentFinalResult.set(true);
@@ -428,9 +423,6 @@ public class WebSearchReactAgent extends BaseAgent {
 
                     recordUsedTool(toolName);
 
-                    if (toolName.contains("tavily")) {
-                        parseSearchResult(result.toString(), agentState);
-                    }
                 } catch (Exception e) {
                     addErrorToolResponse(messages, toolCall,"工具执行失败：" + e.getMessage());
                 } finally {
@@ -440,50 +432,6 @@ public class WebSearchReactAgent extends BaseAgent {
         }
     }
 
-    private void parseSearchResult(String resultJson, AgentState agentState) {
-        try {
-            JsonNode root = MAPPER.readTree(resultJson);
-            if (!root.isArray() || root.isEmpty()) {
-                return;
-            }
-            JsonNode first = root.get(0);
-            JsonNode textNode = first.get("text");
-
-            if (textNode == null || textNode.isNull()){
-                return;
-            }
-
-            JsonNode textJson;
-            if (textNode.isTextual()) {
-                textJson = MAPPER.readTree(textNode.asText());
-            } else {
-                textJson = textNode;
-            }
-
-            JsonNode results = textJson.get("result");
-            if (results == null || !results.isArray()){
-                return;
-            }
-
-            for (JsonNode item : results) {
-                String url = getSafe(item, "url");
-                String title = getSafe(item, "title");
-                String content = getSafe(item, "content");
-
-                if (url != null && !url.isBlank()) {
-                    agentState.searchResults.add(new SearchResult(url, title, content));
-                }
-            }
-
-        } catch (Exception e) {
-            log.warn("解析 tavily 搜索结果失败: {}", e.getMessage());
-        }
-    }
-
-    private String getSafe(JsonNode node, String field) {
-        JsonNode v = node.get(field);
-        return v == null || v.isNull() ? null : v.asText();
-    }
     protected void recordUsedTool(String toolName) {
         if (usedTools != null && toolName != null) {
             usedTools.add(toolName);
@@ -526,20 +474,9 @@ public class WebSearchReactAgent extends BaseAgent {
         private List<ToolCallback> tools;
         private String systemPrompt = "";
         private int maxRounds;
-        private List<Advisor> advisors;
         private ChatMemory chatMemory;
         private AiSessionService sessionService;
-        private AgentTaskManager agentTaskManager;
-
-        public Builder chatMemory(ChatMemory chatMemory) {
-            this.chatMemory = chatMemory;
-            return this;
-        }
-
-        public Builder sessionService(AiSessionService sessionService) {
-            this.sessionService = sessionService;
-            return this;
-        }
+        private AgentTaskManager taskManager;
 
         public Builder name(String name) {
             this.name = name;
@@ -561,16 +498,6 @@ public class WebSearchReactAgent extends BaseAgent {
             return this;
         }
 
-        public Builder advisors(List<Advisor> advisors) {
-            this.advisors = advisors;
-            return this;
-        }
-
-        public Builder advisors(Advisor... advisors) {
-            this.advisors = Arrays.asList(advisors);
-            return this;
-        }
-
         public Builder systemPrompt(String systemPrompt) {
             this.systemPrompt = systemPrompt;
             return this;
@@ -581,18 +508,26 @@ public class WebSearchReactAgent extends BaseAgent {
             return this;
         }
 
-        public Builder agentTaskManager(AgentTaskManager agentTaskManager) {
-            this.agentTaskManager = agentTaskManager;
+        public Builder chatMemory(ChatMemory chatMemory) {
+            this.chatMemory = chatMemory;
             return this;
         }
 
+        public Builder sessionService(AiSessionService sessionService) {
+            this.sessionService = sessionService;
+            return this;
+        }
 
-        public WebSearchReactAgent build() {
+        public Builder taskManager(AgentTaskManager taskManager) {
+            this.taskManager = taskManager;
+            return this;
+        }
+
+        public FileReactAgent build() {
             if (chatModel == null) {
                 throw new IllegalArgumentException("chatModel 不能为空！");
             }
-            return new WebSearchReactAgent(name, chatModel, tools, systemPrompt, maxRounds, chatMemory, advisors, sessionService, agentTaskManager);
+            return new FileReactAgent(name, chatModel, tools, systemPrompt, maxRounds, chatMemory, sessionService, taskManager);
         }
     }
-
 }

@@ -1,8 +1,11 @@
 package cn.myagent.llm.myagent.controller;
 
+import cn.myagent.llm.myagent.agent.file.FileReactAgent;
 import cn.myagent.llm.myagent.agent.websearch.WebSearchReactAgent;
+import cn.myagent.llm.myagent.common.BaseContent;
 import cn.myagent.llm.myagent.manager.AgentTaskManager;
 import cn.myagent.llm.myagent.service.AiSessionService;
+import cn.myagent.llm.myagent.service.file.FileContentService;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -11,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +26,7 @@ import reactor.core.publisher.Flux;
 
 import java.net.http.HttpRequest;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +44,9 @@ public class AgentController implements InitializingBean {
 
     @Resource
     private AgentTaskManager agentTaskManager;
+
+    @Resource
+    private FileContentService fileContentService;
 
     @Value("${tavily.api-key}")
     private String tavilyApiKey;
@@ -84,6 +92,33 @@ public class AgentController implements InitializingBean {
         return result;
     }
 
+    @GetMapping(value = "/file/stream", produces = "text/event-stream;cahrset=UTF-8")
+    public Flux<String> fileStream(@RequestParam(required = true) String query,
+                                   @RequestParam(required = true) String conversationId,
+                                   @RequestParam(required = true) String fileId) {
+        log.info("收到文件问答请求: query={}, conversationId={}, fileId={}", query, conversationId, fileId);
+        if (query == null || query.trim().isEmpty()) {
+            log.warn("查询参数为空或无效");
+            return Flux.error(new IllegalArgumentException("查询参数不能为空"));
+        }
+
+        if (fileId == null || fileId.trim().isEmpty()) {
+            log.warn("文件ID参数为空");
+            return Flux.error(new IllegalArgumentException("文件ID不能为空"));
+        }
+        try {
+            FileReactAgent fileReactAgent = initFileReactAgent();
+            ChatMemory chatMemory = fileReactAgent.creatPersistentChatMemory(conversationId, BaseContent.maxMessages);
+            fileReactAgent.setChatMemory(chatMemory);
+            fileReactAgent.setCurrentFileId(fileId);
+            return fileReactAgent.stream(query, conversationId);
+        } catch (Exception e) {
+            log.error("处理文件问答请求时发生错误: ", e);
+            return Flux.error(e);
+        }
+    }
+
+
     private WebSearchReactAgent initWebSearchAgent() {
         log.info("初始化网页搜索 Agent...");
 
@@ -97,6 +132,20 @@ public class AgentController implements InitializingBean {
                 .build();
     }
 
+    private FileReactAgent initFileReactAgent() {
+        log.info("初始化文件问答 Agent...");
+
+        List<ToolCallback> allTools = Arrays.asList(ToolCallbacks.from(fileContentService));
+
+        return FileReactAgent.builder()
+                .name("file react")
+                .chatModel(chatModel)
+                .tools(allTools)
+                .sessionService(aiSessionService)
+                .taskManager(agentTaskManager)
+                .build();
+
+    }
     @Override
     public void afterPropertiesSet() throws Exception {
         log.info("开始初始化工具toolcallback");
